@@ -29,9 +29,26 @@ if(!(Test-Path -LiteralPath $sdkManager)){
 }
 if(!(Test-Path -LiteralPath "$sdk\licenses\android-sdk-license")){
     if(!$AcceptAndroidLicenses){throw 'Read the Android SDK licenses, then rerun with -AcceptAndroidLicenses to accept them and install the SDK.'}
-    1..100 | ForEach-Object {'y'} | & $sdkManager "--sdk_root=$sdk" --licenses
-    if($LASTEXITCODE -ne 0){throw 'Android SDK license acceptance failed.'}
+    $start=New-Object System.Diagnostics.ProcessStartInfo
+    $start.FileName=$env:ComSpec
+    $start.Arguments='/d /s /c ""'+$sdkManager+'" "--sdk_root='+$sdk+'" --licenses"'
+    $start.UseShellExecute=$false
+    $start.CreateNoWindow=$true
+    $start.RedirectStandardInput=$true
+    $licenseProcess=New-Object System.Diagnostics.Process
+    $licenseProcess.StartInfo=$start
+    [void]$licenseProcess.Start()
+    $licenseProcess.StandardInput.Write(("y`r`n"*100))
+    $licenseProcess.StandardInput.Close()
+    $licenseProcess.WaitForExit()
+    $licenseExit=$licenseProcess.ExitCode
+    $licenseProcess.Dispose()
+    if($licenseExit -ne 0 -or !(Test-Path -LiteralPath "$sdk\licenses\android-sdk-license")){throw 'Android SDK license acceptance failed.'}
+
 }
 & $sdkManager "--sdk_root=$sdk" 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0'
 if($LASTEXITCODE -ne 0){throw 'Android SDK installation failed.'}
+foreach($required in @('platform-tools\adb.exe','platforms\android-36\android.jar','build-tools\36.0.0\aapt2.exe')){
+    if(!(Test-Path -LiteralPath (Join-Path $sdk $required))){throw "Android SDK installation incomplete: $required"}
+}
 Write-Host 'Toolchains ready. Install OBS Studio 33.0.3 (Windows x64), then run .\Build.ps1.'
