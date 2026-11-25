@@ -1,0 +1,4 @@
+#pragma once
+#include <windows.h>
+// P010 is absent from the pinned MinGW DirectShow headers.
+static const GUID MEDIASUBTYPE_P010 = {0x30313050,0x0000,0x0010,{0x80,0x00,0x00,0xaa,0x00,0x38,0x9b,0x71}};

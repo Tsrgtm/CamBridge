@@ -1,6 +1,7 @@
-param([switch]$AndroidOnly, [switch]$PluginOnly, [string]$ObsDirectory = 'C:\Program Files\obs-studio')
+param([switch]$AndroidOnly, [switch]$PluginOnly, [switch]$DesktopOnly, [switch]$SkipDesktop, [string]$ObsDirectory = 'C:\Program Files\obs-studio')
 $ErrorActionPreference = 'Stop'
 $project = $PSScriptRoot
+if($DesktopOnly){& "$project\desktop\Build-Desktop.ps1"; return}
 $javaDirectory = Get-ChildItem -LiteralPath "$project\tools\jdk" -Directory | Select-Object -First 1
 $llvmDirectory = Get-ChildItem -LiteralPath "$project\tools\llvm" -Directory | Select-Object -First 1
 $env:JAVA_HOME = $javaDirectory.FullName
@@ -14,7 +15,7 @@ if (!$PluginOnly) {
     if (!(Test-Path -LiteralPath $gradlePath)) { throw 'The Gradle wrapper is missing. Open the project in Android Studio to build it.' }
     & $gradlePath -p $project --no-daemon --console=plain assembleDebug
     if ($LASTEXITCODE -ne 0) { throw 'Android build failed.' }
-    Copy-Item -LiteralPath "$project\app\build\outputs\apk\debug\app-debug.apk" -Destination "$project\dist\CamBridge-0.4.0.apk" -Force
+    Copy-Item -LiteralPath "$project\app\build\outputs\apk\debug\app-debug.apk" -Destination "$project\dist\CamBridge-0.5.0.apk" -Force
 }
 if (!$AndroidOnly) {
     $llvm = "$($llvmDirectory.FullName)\bin"
@@ -55,7 +56,8 @@ if (!$AndroidOnly) {
     Copy-Item -LiteralPath "$project\Install-Packaged-Plugin.cmd" -Destination "$project\dist\obs-plugin\Install-CamBridge.cmd" -Force
     New-Item -ItemType Directory -Force -Path "$project\dist\obs-plugin\assets\brand","$project\dist\obs-plugin\LICENSES" | Out-Null
     Copy-Item -LiteralPath "$project\assets\brand\cambridge-banner.png" -Destination "$project\dist\obs-plugin\assets\brand\cambridge-banner.png" -Force
-    Copy-Item -LiteralPath "$project\LICENSES\Apache-2.0.txt" -Destination "$project\dist\obs-plugin\LICENSES\Apache-2.0.txt" -Force
-    Compress-Archive -Path "$project\dist\obs-plugin\droid-alter","$project\dist\obs-plugin\README.md","$project\dist\obs-plugin\BUILDING.md","$project\dist\obs-plugin\assets","$project\dist\obs-plugin\LICENSES","$project\dist\obs-plugin\NOTICE.md","$project\dist\obs-plugin\LICENSE","$project\dist\obs-plugin\Install-OBS-Plugin.ps1","$project\dist\obs-plugin\Install-CamBridge.cmd" -DestinationPath "$project\dist\CamBridge-OBS-Windows-x64-0.4.0.zip" -Force
+    Copy-Item -Path "$project\LICENSES\*" -Destination "$project\dist\obs-plugin\LICENSES" -Force
+    Compress-Archive -Path "$project\dist\obs-plugin\droid-alter","$project\dist\obs-plugin\README.md","$project\dist\obs-plugin\BUILDING.md","$project\dist\obs-plugin\assets","$project\dist\obs-plugin\LICENSES","$project\dist\obs-plugin\NOTICE.md","$project\dist\obs-plugin\LICENSE","$project\dist\obs-plugin\Install-OBS-Plugin.ps1","$project\dist\obs-plugin\Install-CamBridge.cmd" -DestinationPath "$project\dist\CamBridge-OBS-Windows-x64-0.5.0.zip" -Force
 }
+if(!$AndroidOnly -and !$PluginOnly -and !$SkipDesktop){& "$project\desktop\Build-Desktop.ps1"}
 Write-Host "Build outputs: $project\dist"

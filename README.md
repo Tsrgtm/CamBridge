@@ -2,125 +2,126 @@
 
 # CamBridge
 
-**Turn an Android phone into a USB camera for OBS Studio on Windows. Free and open source.**
+**Use an Android phone as a Windows camera over USB or paired Wi-Fi. Free and open source.**
 
-Hardware H.264 encoding on the phone, a direct native OBS decoder, and camera controls you can change while streaming. No account, subscription, watermark, or Wi-Fi connection is required.
+CamBridge includes an Android camera app, a standalone Windows receiver/control panel, a Windows virtual camera, and an optional native OBS source. The Windows companion does not need OBS installed or running.
 
-**[Download APK and Windows plugin](https://github.com/Tsrgtm/CamBridge/releases)** · **[Build from source](BUILDING.md)** · **[Report an issue](https://github.com/Tsrgtm/CamBridge/issues)**
+**[Downloads](https://github.com/Tsrgtm/CamBridge/releases)** · **[Build guide](BUILDING.md)** · **[Issues](https://github.com/Tsrgtm/CamBridge/issues)** · **[Security](SECURITY.md)**
 
-## What it does
+## Features
 
-- Android camera app with a matching Windows x64 OBS source plugin.
-- Portrait or landscape output, automatic lens orientation, and optional mirroring.
-- Logical and physical Camera2 lens discovery, including compatible telephoto lenses.
-- Live zoom, tap to focus, manual focus, torch, exposure compensation, ISO, shutter, white balance, stabilization, noise reduction, and sharpening where supported.
-- Live bitrate changes. Changing lens, resolution, or frame rate briefly restarts capture while OBS recording continues.
-- Foreground camera service that keeps an already-started stream running when the phone locks.
-- USB transport through ADB and direct decoding without a media-player playback queue.
+- USB video through ADB, or encrypted Wi-Fi with a device certificate and a random pairing key.
+- **CamBridge Camera** output in compatible Windows camera applications, with 64-bit and 32-bit DirectShow components.
+- Live PC controls generated from the phone's camera capabilities: lens, zoom, focus, torch, exposure, ISO, shutter, white balance, stabilization, processing, resolution, FPS, and bitrate.
+- Full-screen phone preview with lens buttons, zoom, flash, front/rear switching, start/stop, and a settings drawer. Opening settings keeps the same preview surface attached.
+- Hardware H.264 for efficient USB/Wi-Fi streaming, and optional **uncompressed NV12 over USB** to bypass video encoding and decoding.
+- 4K where the selected camera and output format support it; portrait/landscape output and optional mirroring.
+- Bounded transport buffers and a replaceable latest-frame Windows output. Older frames are dropped instead of building an ever-longer playback queue.
+- An already-started stream can continue when the phone screen is off. Audio is added separately in the receiving Windows app.
 
-This is an early **0.4.0 preview**. Tested with a Samsung Galaxy S24 Ultra and **OBS Studio 33.0.3 for Windows x64**. Other phones and OBS versions are not yet verified. Android 10 or newer is required. Microphone audio is added separately in OBS; the APK sends video only. This is an OBS source, not a system-wide webcam driver.
+## Compatibility
 
-## 1. Install the phone app
-
-1. Download `CamBridge-0.4.0.apk` from Releases onto your phone.
-2. Open it and allow that browser or file manager to install this APK when Android asks.
-3. Open **CamBridge** and allow **Camera** access. Allow notifications so the running camera and **Stop camera** action stay visible.
-4. Enable Android **Developer options**: on Samsung, Settings → About phone → Software information → tap **Build number** seven times, then enter your PIN.
-5. Open Settings → Developer options and enable **USB debugging**.
-
-You can update the previously installed Droid Alter app directly with this APK. Its internal application ID is deliberately unchanged. Preview APKs currently use the development signing key from the release build machine; that key is not included in the source repository. A locally rebuilt APK will normally require uninstalling the published APK first. Camera preferences may be lost on uninstall.
-
-## 2. Install the OBS plugin
-
-1. Install **OBS Studio 33.0.3, Windows x64** from [OBS](https://obsproject.com/). This preview depends on OBS's `avcodec-62.dll` and `avutil-60.dll`.
-2. Close OBS completely.
-3. Download and **extract** `CamBridge-OBS-Windows-x64-0.4.0.zip` to a folder. Do not run it inside the ZIP.
-4. Right-click **Install-CamBridge.cmd** → **Run as administrator**. The installer copies the plugin into `C:\ProgramData\obs-studio\plugins\droid-alter`.
-5. Open OBS. In **Sources**, click **+** → **CamBridge USB Camera**.
-
-Manual installation: copy the extracted `droid-alter` folder into `C:\ProgramData\obs-studio\plugins\`, preserving `bin\64bit\droid-alter.dll` and `data\adb\adb.exe`. The old folder, DLL, and source identifiers are kept intentionally so existing OBS scenes and saved ADB paths continue working. Do not install a second copy under another folder.
-
-The DLL contains the CamBridge Windows icon, and `data\cambridge.ico` is included for shortcuts. OBS uses its standard camera symbol in the source picker; it does not display a custom per-plugin logo there.
-
-## 3. Connect over USB
-
-1. Connect the unlocked phone directly to the PC with a **USB data cable**. A charging-only cable will not work.
-2. Accept **Allow USB debugging?** on the phone. Only authorize a PC you trust. No IP address is needed.
-3. In CamBridge, choose your camera and tap **Start USB camera**. Keep the app visible until the stream starts.
-4. In the OBS source properties, keep **Connect camera** enabled. Leave USB serial blank when only one USB phone is attached. Click **Reconnect USB** if necessary.
-5. The ADB path should point to the bundled `data\adb\adb.exe`. If using your own Android platform-tools, select that `adb.exe` instead.
-6. Once video is visible, you may lock the phone. To stop, unlock and use the app button or tap **Stop camera** in the foreground notification.
-
-If the stream stops after locking, set CamBridge's battery usage to **Unrestricted** in Android app settings, then start it again while unlocked. Vendor power management can vary. CamBridge does not start camera capture from a locked screen after a reboot or force-stop.
-
-## 4. Record vertical video
-
-1. In OBS → Settings → **Video**, set Base (Canvas) Resolution to **1080x1920**, Output (Scaled) Resolution to **1080x1920**, and Common FPS to **30**.
-2. In the CamBridge source properties choose **Automatic** orientation. If your phone's orientation metadata differs, choose **Portrait · 90°** or **Portrait · 270°** until upright.
-3. Right-click the source → Transform → **Fit to screen** (`Ctrl+F`). Use **Mirror horizontally** in source properties if desired.
-4. Add **Audio Input Capture** for your PC microphone. In Settings → Output choose your recording folder and format. MKV is a useful recording choice; OBS can remux it afterward.
-5. Click **Start Recording** in OBS. CamBridge's phone button starts the camera stream; recording is performed on the PC.
-
-For landscape recording, use a 1920x1080 canvas and an appropriate landscape orientation. Keeping **Use native camera resolution** disabled gives OBS a stable Full HD source size across phone resolution changes.
-
-## Camera controls while recording
-
-| Panel | Controls |
+| Part | Requirements |
 | --- | --- |
-| Camera | Lens, zoom slider/pinch, tap focus, focus mode/manual focus, torch, optical/video stabilization, preview grid |
-| Exposure | Automatic exposure, exposure compensation, AE lock, manual ISO and shutter |
-| Color | White balance preset and lock, noise reduction, edge enhancement |
-| Stream | Resolution, frame rate, bitrate |
+| Phone | Android **8.0+**, a Camera2 video output, and an AVC encoder for H.264 mode. Pure Java APK; no manufacturer-specific camera IDs or native ABI requirement. |
+| Windows companion | Windows **10/11 x64**, .NET Framework 4.8 and Windows Media Foundation for H.264. Windows N editions may need Microsoft's Media Feature Pack. |
+| Other camera apps | Applications accepting a DirectShow virtual camera. Restart the receiving app after installation. Compatibility with every application is not guaranteed. |
+| Optional OBS plugin | OBS Studio **33.0.3, Windows x64**, with its supplied FFmpeg DLLs. |
+| USB | A data cable, USB debugging, authorization of this PC, and a working OEM ADB driver if Windows needs one. |
 
-Controls are discovered from each camera's capabilities. An unavailable control may be disabled or omitted. Turn **Automatic exposure** off to set ISO and shutter. Shutter duration is limited by the current frame rate and sensor. Fixed-focus lenses do not offer manual focus. Some camera settings interact; stabilization and heavy processing can crop the image or add latency.
+The app discovers capabilities rather than assuming Samsung, Pixel, Xiaomi, OnePlus, or any other brand's lens layout. Fixed-focus cameras, missing manual exposure, restricted physical lenses, and unsupported stream combinations are handled by exposing only reported controls. Android version support is not a claim that every phone has been physically tested. Device testing to date uses a Galaxy S24 Ultra; broader device reports are welcome.
 
-Lens, resolution, and FPS changes cause a brief interruption while the camera/encoder reopens. OBS keeps recording and may hold the last frame during the switch. Bitrate and supported camera controls apply live. The app's grid is a composition aid, not a burned-in overlay.
+## Install
 
-### Galaxy S24 Ultra lenses
+1. Download `CamBridge-0.5.0.apk` and `CamBridge-Windows-x64-0.5.0.zip` from Releases.
+2. On Android, open the APK, allow installation from that file source when asked, and open **CamBridge**. Allow **Camera** and notifications.
+3. Extract the Windows ZIP. Run **Install-CamBridge.cmd** under the Windows account that will use the camera. It installs under `%LOCALAPPDATA%\Programs\CamBridge`, registers both camera DLLs for that user, and creates a Start menu shortcut. Administrator rights are normally unnecessary.
+4. Open **CamBridge** from Start. Close other CamBridge instances before updating.
 
-Discovery on the test phone found seven Camera2 routes: rear auto, ultra wide (~14mm equivalent), main wide (~22mm), telephoto 3x (~61mm), telephoto 5x (~113mm), and two front routes (~25mm and ~30mm). Routes can share a physical sensor or represent a crop; seven routes do not mean seven physical cameras. The app selects physical cameras inside a logical camera session where Android requires it.
+The preview APK is development-signed. It can update earlier Droid Alter/CamBridge APKs signed on the same release machine. A build from another machine normally has a different debug signing key and may require uninstalling first. Private signing keys are not in the repository.
 
-Samsung's stock camera may offer extra modes or processing unavailable to third-party Camera2 apps. CamBridge exposes what Android reports; it cannot unlock vendor-private cameras, guarantee every lens/resolution combination, or provide the stock camera's entire feature set.
+## USB connection
 
-## Latency and audio sync
+1. Enable Android Developer options. Usually: Settings → About phone → tap **Build number** seven times. Some brands place this inside Software information.
+2. Enable **USB debugging**, connect a USB **data** cable, unlock the phone, and approve **Allow USB debugging?** for this trusted PC.
+3. On the phone, tap **Start camera**. Start it while the phone is unlocked and the app is visible.
+4. In the Windows companion select **USB** and click **Connect**. Leave USB serial blank for one connected phone. If several are connected, enter the intended serial from `adb devices -l`.
+5. In the receiving app's camera selector choose **CamBridge Camera**. Keep the Windows companion open while using it.
 
-USB still has camera exposure, sensor processing, H.264 encoding, transport, decoding, and display delay. CamBridge avoids a playback queue; **zero delay is not promised**. The earlier approximately one-second buffered delay was removed on the test setup. Decoder log timings are only decode/delivery work, not complete camera-to-screen latency.
+No IP address is required for USB. Closing a receiving app does not stop the phone camera; use the phone's **Stop camera** button or notification when finished.
 
-Start with 1080p/30, 16–24 Mbps, automatic exposure, and fast processing. If needed, try a lower resolution, shorter manual shutter with enough light, and disable stabilization/high quality processing. Avoid long exposures in dim light. Higher FPS can help on supported hardware, but is not guaranteed to reduce delay.
+## Wi-Fi connection
 
-For lip sync, record a visible hand clap with your microphone, review the result, then use OBS → Advanced Audio Properties → **Sync Offset** to delay the microphone until it matches the video. Measure your own setup; a fixed guessed offset is unreliable. Preview refresh and the recording can differ.
+Use the same local network; start at **1080p/30 and 8 Mbps**. A good 5 GHz/6 GHz connection is preferable for high bitrate video. Lower bitrate if the measured FPS falls. The current network test improved from about 3 fps at 40 Mbps to 22 fps at 8 Mbps; wireless performance is not guaranteed. Guest networks and access-point isolation can block device-to-device connections.
+
+**USB-assisted pairing:** connect over USB first, then click **Prepare Wi-Fi** in the PC companion. It obtains the phone's connection link through the trusted USB control channel. Disconnect in the companion, select **Wi-Fi**, and connect using the prepared link. The USB cable can then be removed.
+
+**Wireless-only pairing:** on the phone open **Stream** → enable **encrypted Wi-Fi** → **Copy Wi-Fi connection link**. Transfer that link privately to your PC, paste it into the companion's Wi-Fi field, and connect. It contains the local address, a random 128-bit key, and the certificate fingerprint. Do not post it in issues or screenshots. The companion checks the certificate fingerprint; it does not disable certificate verification globally.
+
+Turning Wi-Fi off/on or restarting the phone service changes the pairing key; prepare/copy a new link. Wi-Fi video uses H.264. If uncompressed USB mode is selected, change Video transport back to H.264 from the controls. The control panel can load even while video is reconnecting.
+
+## Camera controls and full-screen preview
+
+The phone opens with a full-screen preview and visible controls. Tap a lens, pinch/drag zoom, tap the image to focus, toggle **Flash**, or use **Flip** for front/rear. **Settings**, **Exposure**, and **Stream** open the settings drawer without moving the preview surface. **Close settings** returns to the camera overlay. These overlays are not burned into the output video.
+
+The PC's Camera, Exposure, Color, and Stream tabs mirror the phone's supported settings. Unsupported controls are disabled. Turn automatic exposure off before choosing manual ISO/shutter. Select manual focus before setting focus distance. Frame rate and sensor limits constrain shutter duration.
+
+Lens, resolution, FPS, and video-transport changes briefly restart capture. Receiving apps keep their camera connection and may show the last frame or standby during reconnection. Bitrate, zoom, exposure, and other supported camera controls update live. Some phone manufacturers still restrict physical lenses or combinations that their stock camera can use.
+
+## 4K and minimum delay
+
+Start with **H.264, 3840×2160, 30 fps, 24–40 Mbps**, if the camera reports that combination. For weaker phones or links, start at 1280×720/30 and increase resolution. Use fast/off processing and enough light for a short exposure. Stabilization and long exposure can add sensor processing time.
+
+The Windows receiver prefers the high-performance GPU for H.264 when available, with CPU fallback. A 120-frame 4K USB test reached 29 fps on the tested RTX 4070 laptop; other runs, including screen-off capture, were slower. This is throughput, not a measured end-to-end latency or a sustained-performance guarantee.
+
+**Uncompressed USB** sends NV12 camera frames directly; it is uncompressed video, not Bayer/DNG sensor RAW. It avoids the H.264 encoder and decoder, but moves much more data:
+
+| Format at 30 fps | Approximate video payload |
+| --- | --- |
+| 1280×720 NV12 | 41.5 MB/s |
+| 1920×1080 NV12 | 93.3 MB/s |
+| 3840×2160 NV12 | **373.2 MB/s / 2.99 Gbit/s** |
+
+These numbers exclude protocol overhead. USB 2 cannot carry uncompressed 4K/30. A USB 3-capable phone, cable, port, and sufficiently fast software path are required. Many charging cables only carry USB 2 data. The preview test on the current USB path delivered about 34 MB/s and 2.8 fps at uncompressed 4K; it does not establish a universal limit for other hardware. H.264 can perform much better on such a link.
+
+Choose **Video transport → Uncompressed NV12** in the PC Stream tab, or the phone's uncompressed USB switch, to test it. Watch the PC's measured FPS and MB/s. Do not assume uncompressed is faster: a single 4K NV12 frame is 12.4 MB. Use H.264 if raw transfers reduce frame rate or increase delay.
+
+**Zero latency is not physically possible.** Sensor readout, exposure, transport, frame conversion, and display refresh take time. CamBridge avoids a playback backlog and uses a receiver-ready handshake before sending frames. PC frame-work timings are not complete camera-to-screen latency. For audio sync, record a visible hand clap, review the recording, and adjust the microphone sync offset in the receiving app if needed.
+
+## Keep streaming while locked
+
+Start capture while unlocked with CamBridge visible, then turn the screen off. The foreground camera service and notification keep the active capture running. If an OEM stops it, allow notifications and set CamBridge's battery usage to **Unrestricted**. This does not bypass Android's restriction on starting camera capture from the background after reboot or force-stop.
+
+## OBS
+
+You can select **CamBridge Camera** in OBS's **Video Capture Device** source using the standalone companion.
+
+Alternatively, install `CamBridge-OBS-Windows-x64-0.5.0.zip`: close OBS, extract it, and run its installer as administrator if ProgramData permissions require it. Add **CamBridge USB Camera**. This native source connects directly over USB and handles H.264 and NV12. Do not have it and the companion compete for the same phone's USB video stream.
+
+The native plugin retains the installed `droid-alter` directory, DLL name, source identifiers, and Android package ID so old scenes and app upgrades remain compatible. Its visible name and artwork are CamBridge.
+
+For vertical recording: OBS Settings → Video → set canvas/output to **1080×1920**, choose 30 fps, set the camera orientation upright, and fit the source to the canvas. Add your microphone separately. OBS's standard source-picker camera symbol is used; the custom CamBridge icon is embedded in the DLL and supplied as an ICO.
 
 ## Troubleshooting
 
-| Symptom | Try this |
+| Symptom | Action |
 | --- | --- |
-| No USB device / no video | Unlock the phone, enable USB debugging, accept the authorization prompt, try a known data cable and another direct USB port. File transfer working alone does not prove ADB is enabled. |
-| Samsung shows file transfer but no ADB | Toggle USB debugging off/on and reconnect. If Windows still lacks the ADB interface, install the official [Samsung USB driver](https://developer.samsung.com/android-usb-driver). |
-| `unauthorized` | Unlock the phone and accept the debugging prompt. If absent, revoke USB debugging authorizations in Developer options and reconnect. |
-| Multiple devices | Run `adb devices -l` and enter the intended USB device serial in OBS source properties. Each OBS source needs a unique PC USB port number. |
-| Camera source missing | Close OBS, check the plugin directory layout, avoid duplicate DLLs, and confirm Windows x64 OBS 33.0.3. Open OBS Help → Log Files → View Current Log and search for `droid-alter`. |
-| Missing FFmpeg DLL / plugin won't load | Use the supported OBS version. Do not download random individual DLLs into the OBS folder. |
-| Connected but black | Start the phone camera, allow Camera permission, close other camera apps, try rear auto at 1080p/30, then click Reconnect USB. |
-| Lens switch fails | Try rear auto and a lower resolution/FPS. Not every physical camera supports every stream combination. Include the route and setting in an issue. |
-| Wrong rotation | Try the explicit 90° or 270° portrait option and fit the source to the canvas again. |
-| Stops on lock | Start while unlocked, allow the foreground notification, and remove battery restrictions. |
-| Old source name in a scene | OBS scene instance names are user labels; rename it in Sources. The source type is now CamBridge USB Camera. |
+| USB device absent or unauthorized | Unlock, approve debugging, try another data cable/direct port, and check `adb devices -l`. File transfer alone does not prove ADB is available. Use the manufacturer's official Windows USB driver if necessary. |
+| Camera missing in another app | Restart that app after installation, run CamBridge under the same Windows user, check camera permission in that app, and try a supported DirectShow application. |
+| Black preview / camera busy | Stop other camera apps, start CamBridge while unlocked, and try rear auto at 720p/30. Read the phone status and PC error. |
+| Unsupported lens or resolution | Select another exposed route or reduce resolution/FPS. Android's public API may expose fewer options than the stock camera. |
+| Wi-Fi refuses to connect | Prepare a fresh link, check the same LAN and guest isolation, and use H.264. If the IP changed, prepare/copy the link again. |
+| Raw 4K is slow | Check measured MB/s, use a genuine USB 3 path, or return to H.264. Removing compression does not remove bandwidth limits. |
+| Wrong aspect or orientation | Change the companion orientation/mirror controls. The virtual camera letterboxes to the receiving app's requested shape. |
+| Stream stops when locked | Start while unlocked, allow the foreground notification, and remove battery restrictions. |
+| Other app already uses the stream | Close duplicate receivers; one companion publishes one camera output per Windows user. |
 
-ADB diagnostics from the extracted plugin folder:
-
-```powershell
-.\droid-alter\data\adb\adb.exe devices -l
-.\droid-alter\data\adb\adb.exe forward --list
-```
-
-For an issue, include phone model/Android version, OBS version, APK/plugin version, selected camera route/resolution/FPS, and relevant OBS logs. Remove device serials and personal paths before posting.
+Report app versions, phone model/Android version, Windows/app version, selected lens, format, resolution/FPS, and a minimal reproduction. Remove pairing links, device serials, private paths, and personal video from logs/screenshots.
 
 ## Uninstall
 
-Stop the stream, close OBS, remove `C:\ProgramData\obs-studio\plugins\droid-alter`, and uninstall CamBridge from Android. Existing OBS scenes will show the missing source until you remove it. Revoke this PC's USB debugging authorization if you no longer need it.
+Stop the camera and close receiving apps/CamBridge. Run `Uninstall-Windows.ps1` from the installed folder to unregister both camera DLLs and remove the shortcut. You can then remove that folder. Uninstall the APK in Android settings. For the optional OBS plugin, close OBS and remove its `droid-alter` plugin folder. Revoke USB debugging authorization when it is no longer needed.
 
-## Source and license
+## Open source
 
-`app/` contains the Android Camera2/MediaCodec app. `obs-plugin/` contains the native OBS source and decoder. `tests/` contains transport and libobs integration checks. `assets/brand/` contains the logo, Android-source mark, PNG sizes, and multi-resolution Windows ICO.
-
-CamBridge source is licensed under **GPL-2.0-or-later**; see [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md). The project is independent of DroidCam, Samsung, Google, and OBS. Third-party names identify compatibility only. No proprietary DroidCam code or assets are included.
+CamBridge is **GPL-2.0-or-later**. Source, build/install scripts, tests, brand assets, and third-party notices are included. See [LICENSE](LICENSE), [NOTICE.md](NOTICE.md), and [CONTRIBUTING.md](CONTRIBUTING.md). The virtual-camera component adapts OBS/libdshowcapture; optimized YUV processing uses libyuv. CamBridge is independent of OBS, Google, Samsung, and DroidCam.

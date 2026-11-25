@@ -320,6 +320,6 @@ bool obs_module_load(void)
     information.audio_render = cameraAudio;
     information.icon_type = OBS_ICON_TYPE_CAMERA;
     obs_register_source(&information);
-    blog(LOG_INFO, "[droid-alter] USB camera plugin 0.4.0 loaded · direct low-latency decode and automatic orientation");
+    blog(LOG_INFO, "[droid-alter] USB camera plugin 0.5.0 loaded · direct low-latency decode and automatic orientation");
     return true;
 }

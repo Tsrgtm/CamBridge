@@ -32,6 +32,12 @@ public final class MainActivity extends Activity implements TextureView.SurfaceT
     private final List<LinearLayout> panels=new ArrayList<>();
     private final List<Button> tabButtons=new ArrayList<>(), lensButtons=new ArrayList<>();
     private LinearLayout lensRow;
+    private FrameLayout root, cameraFrame, fullScreenLayer;
+    private ScrollView settingsScroll;
+    private LinearLayout settingsContent;
+    private boolean fullScreen;
+    private TextView pairingText;
+    private Switch wirelessSwitch,rawSwitch;
     private TextureView preview;
     private CameraOverlay overlay;
     private TextView status,summary,zoomLabel,evLabel,focusLabel,controlHint;
@@ -47,11 +53,12 @@ public final class MainActivity extends Activity implements TextureView.SurfaceT
         public void onServiceConnected(ComponentName name,IBinder binder){
             service=((CameraService.LocalBinder)binder).service();engine=service.engine();
             service.setListener(new CameraEngine.Listener(){
-                public void status(String message){runOnUiThread(()->status.setText(message));}
+                public void status(String message){runOnUiThread(()->{status.setText(message);refreshHud();});}
+                public void controlsChanged(){runOnUiThread(()->{main.removeCallbacks(applyStream);restoreServiceSettings();uiUpdating=true;wirelessSwitch.setChecked(service.wireless());rawSwitch.setChecked(service.rawMode());uiUpdating=false;pairingText.setText(service.pairingDetails());});}
                 public void failed(String message){runOnUiThread(()->{setStreaming(false);status.setText(message);});}
             });
             if(service.isStreaming()){restoreServiceSettings();}else{service.setControls(controls);}
-            setStreaming(service.isStreaming());status.setText(service.status());
+            setStreaming(service.isStreaming());status.setText(service.status());uiUpdating=true;wirelessSwitch.setChecked(service.wireless());rawSwitch.setChecked(service.rawMode());uiUpdating=false;pairingText.setText(service.pairingDetails());
             if(streaming&&preview.isAvailable()){engine.attachPreview(preview.getSurfaceTexture());}
         }
         public void onServiceDisconnected(ComponentName name){service=null;engine=null;}
@@ -60,26 +67,26 @@ public final class MainActivity extends Activity implements TextureView.SurfaceT
     @Override public void onCreate(Bundle saved){
         super.onCreate(saved);manager=(CameraManager)getSystemService(CAMERA_SERVICE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);getWindow().setStatusBarColor(BASE);getWindow().setNavigationBarColor(BASE);
-        buildInterface();bound=bindService(new Intent(this,CameraService.class),connection,BIND_AUTO_CREATE);
+        buildInterface();if(Build.VERSION.SDK_INT>=33){getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,()->{if(!fullScreen){toggleFullScreen();}else{finish();}});}bound=bindService(new Intent(this,CameraService.class),connection,BIND_AUTO_CREATE);
         if(checkSelfPermission(Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED){discoverCameras();}
         else{requestPermissions(new String[]{Manifest.permission.CAMERA},1);}
     }
 
     private void buildInterface(){
-        ScrollView scroll=new ScrollView(this);scroll.setBackgroundColor(BASE);scroll.setFillViewport(true);
-        scroll.setOnApplyWindowInsetsListener((view,insets)->{view.setPadding(0,insets.getSystemWindowInsetTop(),0,insets.getSystemWindowInsetBottom());return insets;});
-        LinearLayout content=column();content.setPadding(dp(16),dp(12),dp(16),dp(28));scroll.addView(content);setContentView(scroll);
+        ScrollView scroll=new ScrollView(this);settingsScroll=scroll;root=new FrameLayout(this);scroll.setBackgroundColor(BASE);scroll.setFillViewport(true);
+
+        LinearLayout content=column();content.setPadding(dp(16),dp(12),dp(16),dp(28));settingsContent=content;scroll.addView(content);root.addView(scroll,new FrameLayout.LayoutParams(-1,-1));setContentView(root);
         LinearLayout header=row();TextView title=text("CamBridge",22,TEXT);title.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));
         header.addView(title,new LinearLayout.LayoutParams(0,-2,1));summary=text("USB camera",13,BLUE);header.addView(summary);content.addView(header);
-        status=text("Connect your phone camera to OBS",13,MUTED);status.setPadding(0,dp(7),0,dp(12));content.addView(status);
-        FrameLayout frame=new FrameLayout(this);frame.setBackgroundColor(Color.BLACK);preview=new TextureView(this);preview.setOpaque(false);preview.setSurfaceTextureListener(this);
+        status=text("Connect your phone camera to Windows",13,MUTED);status.setPadding(0,dp(7),0,dp(12));content.addView(status);
+        FrameLayout frame=new FrameLayout(this);cameraFrame=frame;frame.setBackgroundColor(Color.BLACK);preview=new TextureView(this);preview.setOpaque(false);preview.setSurfaceTextureListener(this);
         frame.addView(preview,new FrameLayout.LayoutParams(-1,-1));overlay=new CameraOverlay();frame.addView(overlay,new FrameLayout.LayoutParams(-1,-1));
-        content.addView(frame,new LinearLayout.LayoutParams(-1,dp(236)));wirePreviewGestures();
+        root.addView(frame,0,new FrameLayout.LayoutParams(-1,-1));wirePreviewGestures();
         HorizontalScrollView lensScroll=new HorizontalScrollView(this);lensScroll.setHorizontalScrollBarEnabled(false);lensRow=row();lensScroll.addView(lensRow);content.addView(lensScroll);
         zoomLabel=text("Zoom 1.0×",14,TEXT);zoomLabel.setPadding(0,dp(8),0,0);content.addView(zoomLabel);zoomSlider=slider(content,1000);
         zoomSlider.setOnSeekBarChangeListener(new SliderListener(){public void onProgressChanged(SeekBar b,int p,boolean user){
             if(uiUpdating){return;}controls.zoom=(float)(minimumZoom*Math.pow(maximumZoom/minimumZoom,p/1000.0));zoomLabel.setText(String.format(Locale.US,"Zoom %.2f×",controls.zoom));sendControls();}});
-        start=button("Start USB camera");start.setTextColor(BASE);start.setBackgroundTintList(android.content.res.ColorStateList.valueOf(BLUE));content.addView(start,new LinearLayout.LayoutParams(-1,dp(48)));start.setOnClickListener(view->toggleStreaming());
+        start=button("Start camera");start.setTextColor(BASE);start.setBackgroundTintList(android.content.res.ColorStateList.valueOf(BLUE));content.addView(start,new LinearLayout.LayoutParams(-1,dp(48)));start.setOnClickListener(view->toggleStreaming());
         LinearLayout tabs=row();tabs.setPadding(0,dp(14),0,dp(10));content.addView(tabs);
         for(String name:new String[]{"Camera","Exposure","Color","Stream"}){
             int index=tabButtons.size();Button tab=button(name);tab.setTextSize(12);tab.setPadding(0,0,0,0);tabs.addView(tab,new LinearLayout.LayoutParams(0,dp(42),1));tab.setOnClickListener(view->selectPanel(index));tabButtons.add(tab);
@@ -96,10 +103,57 @@ public final class MainActivity extends Activity implements TextureView.SurfaceT
         isoChoice=spinner(exposure,"ISO sensitivity");shutterChoice=spinner(exposure,"Shutter speed");exposure.addView(text("Manual exposure is limited to the sensor range and current frame rate.",12,MUTED));
         wbChoice=spinner(color,"White balance");wbLockSwitch=toggle(color,"Lock white balance");noiseChoice=spinner(color,"Noise reduction");edgeChoice=spinner(color,"Edge enhancement");color.addView(text("Fast processing keeps latency low. High quality processing can add sensor processing time.",12,MUTED));
         sizeChoice=spinner(stream,"Video resolution");fpsChoice=spinner(stream,"Frame rate");bitrateChoice=spinner(stream,"Video bitrate");populate(bitrateChoice,Arrays.asList("8 Mbps","16 Mbps","24 Mbps","40 Mbps","60 Mbps"));bitrateChoice.setSelection(2);
-        stream.addView(text("Changes apply while streaming. Lens, resolution and frame-rate changes briefly restart capture; OBS recording stays active. Bitrate and camera controls update live.\n\nStart the camera while unlocked. Streaming continues with the screen off. Stop from the notification or this button. Your microphone stays in OBS.",13,MUTED));
-        wireControls();selectPanel(0);start.setEnabled(false);
+        stream.addView(text("Changes apply while streaming. Lens, resolution and frame-rate changes briefly restart capture; OBS recording stays active. Bitrate and camera controls update live.\n\nStart the camera while unlocked. Streaming continues with the screen off. Stop from the notification or this button. Your microphone stays in the PC app.",13,MUTED));
+        rawSwitch=toggle(stream,"Uncompressed USB video (NV12)");rawSwitch.setOnCheckedChangeListener((v,value)->{if(uiUpdating||service==null){return;}service.setRawMode(value);loadCapabilities(false);scheduleStreamUpdate();});
+        stream.addView(text("Uncompressed 4K/30 needs about 373 MB/s. Use a USB 3 data cable and port. H.264 may be faster on slower links. Wi-Fi video uses H.264.",12,MUTED));
+        Button fullscreen=button("Full-screen preview");stream.addView(fullscreen);fullscreen.setOnClickListener(v->toggleFullScreen());
+        Switch wireless=toggle(stream,"Enable encrypted Wi-Fi");wirelessSwitch=wireless;
+        pairingText=text("USB is always available. Enable Wi-Fi to pair your PC.",12,MUTED);pairingText.setTextIsSelectable(true);stream.addView(pairingText);
+        wireless.setOnCheckedChangeListener((v,enabled)->{if(service==null||uiUpdating){return;}try{service.setWireless(enabled);pairingText.setText(service.pairingDetails());}catch(Exception error){status.setText("Wi-Fi: "+error.getMessage());}});
+        Button copy=button("Copy Wi-Fi connection link");stream.addView(copy);copy.setOnClickListener(v->{if(service!=null&&service.wireless()){((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(android.content.ClipData.newPlainText("CamBridge connection",service.pairingLink()));status.setText("Connection link copied · paste it into CamBridge on your PC");}});
+        wireControls();selectPanel(0);start.setEnabled(false);buildCameraHud();
     }
 
+    private LinearLayout cameraHud, hudLensRow, hudTop;
+    private final List<Button> hudLenses=new ArrayList<>();
+    private TextView hudStatus,hudZoomText;
+    private SeekBar hudZoom;
+    private Button hudStart,hudTorch,hudSettings;
+    private void buildCameraHud(){
+        LinearLayout top=column();hudTop=top;top.setPadding(dp(16),dp(34),dp(16),dp(8));top.setBackgroundColor(0x9c142333);
+        LinearLayout toolbar=row();TextView brand=text("CamBridge",19,TEXT);brand.setTypeface(Typeface.DEFAULT,Typeface.BOLD);toolbar.addView(brand,new LinearLayout.LayoutParams(0,-2,1));
+        hudTorch=button("Flash off");hudTorch.setContentDescription("Toggle camera torch");hudTorch.setOnClickListener(v->{if(torchSwitch.isEnabled()){torchSwitch.setChecked(!torchSwitch.isChecked());refreshHud();}});toolbar.addView(hudTorch);
+        Button flip=button("Flip");flip.setContentDescription("Switch between front and rear cameras");flip.setOnClickListener(v->{if(!ready){return;}boolean front=lens().front;for(int i=0;i<lenses.size();i++){if(lenses.get(i).front!=front){lensChoice.setSelection(i);return;}}});toolbar.addView(flip);
+        hudSettings=button("Settings");hudSettings.setOnClickListener(v->toggleFullScreen());toolbar.addView(hudSettings);top.addView(toolbar);
+        hudStatus=text("Start the camera, then connect CamBridge on your PC",12,TEXT);hudStatus.setMaxLines(2);top.addView(hudStatus);root.addView(top,new FrameLayout.LayoutParams(-1,-2,Gravity.TOP));
+        cameraHud=column();cameraHud.setPadding(dp(16),dp(8),dp(16),dp(28));cameraHud.setBackgroundColor(0xcc142333);
+        HorizontalScrollView strip=new HorizontalScrollView(this);strip.setHorizontalScrollBarEnabled(false);hudLensRow=row();strip.addView(hudLensRow);cameraHud.addView(strip,new LinearLayout.LayoutParams(-1,dp(52)));
+        LinearLayout zoom=row();hudZoomText=text("1.00×",16,BLUE);zoom.addView(hudZoomText,new LinearLayout.LayoutParams(dp(70),dp(40)));hudZoom=new SeekBar(this);hudZoom.setMax(1000);zoom.addView(hudZoom,new LinearLayout.LayoutParams(0,dp(44),1));hudZoom.setOnSeekBarChangeListener(new SliderListener(){public void onProgressChanged(SeekBar bar,int value,boolean user){if(user){zoomSlider.setProgress(value);}}});cameraHud.addView(zoom);
+        LinearLayout shutter=row();shutter.setGravity(Gravity.CENTER);Button exposure=button("Exposure");exposure.setOnClickListener(v->{selectPanel(1);setDrawer(true);});shutter.addView(exposure,new LinearLayout.LayoutParams(0,dp(52),1));
+        hudStart=button("Start camera");hudStart.setTextColor(BASE);android.graphics.drawable.GradientDrawable fill=new android.graphics.drawable.GradientDrawable();fill.setColor(BLUE);fill.setCornerRadius(dp(28));hudStart.setBackground(fill);hudStart.setOnClickListener(v->toggleStreaming());LinearLayout.LayoutParams shutterSize=new LinearLayout.LayoutParams(dp(146),dp(56));shutterSize.setMargins(dp(10),0,dp(10),0);shutter.addView(hudStart,shutterSize);
+        Button stream=button("Stream");stream.setOnClickListener(v->{selectPanel(3);setDrawer(true);});shutter.addView(stream,new LinearLayout.LayoutParams(0,dp(52),1));cameraHud.addView(shutter);root.addView(cameraHud,new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM));
+        root.setOnApplyWindowInsetsListener((view,insets)->{top.setPadding(dp(16),insets.getSystemWindowInsetTop()+dp(6),dp(16),dp(8));cameraHud.setPadding(dp(16),dp(8),dp(16),insets.getSystemWindowInsetBottom()+dp(12));return insets;});
+        setDrawer(false);
+    }
+    private void hudRoutes(){
+        hudLensRow.removeAllViews();hudLenses.clear();
+        for(int i=0;i<lenses.size();i++){final int index=i;Button chip=button(lenses.get(i).shortName);chip.setTextSize(12);chip.setPadding(dp(10),0,dp(10),0);LinearLayout.LayoutParams item=new LinearLayout.LayoutParams(-2,dp(42));item.setMargins(dp(2),dp(4),dp(2),0);hudLensRow.addView(chip,item);chip.setOnClickListener(v->lensChoice.setSelection(index));hudLenses.add(chip);}
+        refreshHud();
+    }
+    private void refreshHud(){
+        if(hudStart==null){return;}hudStart.setText(streaming?"Stop camera":"Start camera");hudStart.setEnabled(ready&&preview.isAvailable()&&!rates.isEmpty());hudZoomText.setText(String.format(Locale.US,"%.2f×",controls.zoom));hudZoom.setProgress(zoomSlider.getProgress());hudZoom.setEnabled(zoomSlider.isEnabled());hudTorch.setEnabled(torchSwitch.isEnabled());hudTorch.setText(controls.torch?"Flash on":"Flash off");
+        if(service!=null){hudStatus.setText(service.status());}
+        for(int i=0;i<hudLenses.size();i++){boolean selected=ready&&i==lensChoice.getSelectedItemPosition();hudLenses.get(i).setTextColor(selected?BASE:TEXT);hudLenses.get(i).setBackgroundTintList(android.content.res.ColorStateList.valueOf(selected?BLUE:PANEL));}
+    }
+    private void setDrawer(boolean open){
+        fullScreen=!open;settingsScroll.setVisibility(open?View.VISIBLE:View.GONE);cameraHud.setVisibility(open?View.GONE:View.VISIBLE);hudSettings.setText(open?"Close settings":"Settings");
+        int height=Math.min(dp(450),(int)(getResources().getDisplayMetrics().heightPixels*0.62f));settingsScroll.setLayoutParams(new FrameLayout.LayoutParams(-1,height,Gravity.BOTTOM));
+        settingsScroll.bringToFront();hudTop.bringToFront();refreshHud();
+    }
+    private void toggleFullScreen(){setDrawer(fullScreen);}
+
+    @android.annotation.SuppressLint("GestureBackNavigation")
+    @Override public void onBackPressed(){if(!fullScreen){toggleFullScreen();}else{super.onBackPressed();}}
     private void wirePreviewGestures(){
         ScaleGestureDetector pinch=new ScaleGestureDetector(this,new ScaleGestureDetector.SimpleOnScaleGestureListener(){public boolean onScale(ScaleGestureDetector d){setZoom(controls.zoom*d.getScaleFactor());return true;}});
         GestureDetector taps=new GestureDetector(this,new GestureDetector.SimpleOnGestureListener(){
@@ -137,7 +191,7 @@ public final class MainActivity extends Activity implements TextureView.SurfaceT
             uiUpdating=true;List<String> labels=new ArrayList<>();for(CameraCatalog.Lens lens:lenses){labels.add(lens.title);}populate(lensChoice,labels);lensRow.removeAllViews();lensButtons.clear();
             for(int i=0;i<lenses.size();i++){final int index=i;Button chip=button(lenses.get(i).shortName);chip.setTextSize(12);chip.setPadding(0,0,0,0);LinearLayout.LayoutParams layout=new LinearLayout.LayoutParams(dp(58),dp(44));layout.setMargins(dp(2),dp(8),dp(2),0);lensRow.addView(chip,layout);chip.setOnClickListener(v->lensChoice.setSelection(index));lensButtons.add(chip);}
             String previous=getPreferences(MODE_PRIVATE).getString("lens",lenses.get(0).key);lastLens=0;for(int i=0;i<lenses.size();i++){if(lenses.get(i).key.equals(previous)){lastLens=i;break;}}
-            lensChoice.setSelection(lastLens);ready=true;uiUpdating=false;loadCapabilities(false);status.setText("Ready · "+lenses.size()+" camera routes available");start.setEnabled(preview.isAvailable());
+            lensChoice.setSelection(lastLens);ready=true;hudRoutes();uiUpdating=false;loadCapabilities(false);status.setText("Ready · "+lenses.size()+" camera routes available");start.setEnabled(preview.isAvailable());
         }catch(Exception error){uiUpdating=false;status.setText("Camera discovery: "+error.getMessage());}
     }
     private CameraCatalog.Lens lens(){return lenses.get(Math.max(0,lensChoice.getSelectedItemPosition()));}
@@ -148,14 +202,14 @@ public final class MainActivity extends Activity implements TextureView.SurfaceT
         if(!ready){return;}uiUpdating=true;
         try{
             CameraCharacteristics c=capabilities();StreamConfigurationMap map=c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);if(map==null){map=manager.getCameraCharacteristics(lens().cameraId).get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);}
-            Size[] supported=map==null?null:map.getOutputSizes(MediaCodec.class);sizes.clear();List<String> labels=new ArrayList<>();if(supported!=null){for(Size size:supported){if(size.getWidth()>=640&&size.getWidth()<=3840&&size.getHeight()>=480&&size.getHeight()<=2160){sizes.add(size);}}}
-            sizes.sort((a,b)->Long.compare((long)b.getWidth()*b.getHeight(),(long)a.getWidth()*a.getHeight()));int selected=0;Size preferred=preserve&&service!=null?service.captureSize():new Size(1920,1080);
+            Size[] supported=map==null?null:(service!=null&&service.rawMode()?map.getOutputSizes(android.graphics.ImageFormat.YUV_420_888):map.getOutputSizes(MediaCodec.class));sizes.clear();List<String> labels=new ArrayList<>();if(supported!=null){for(Size size:supported){if(size.getWidth()>=320&&size.getWidth()<=3840&&size.getHeight()>=240&&size.getHeight()<=2160&&size.getWidth()%2==0&&size.getHeight()%2==0){sizes.add(size);}}}
+            sizes.sort((a,b)->Long.compare((long)b.getWidth()*b.getHeight(),(long)a.getWidth()*a.getHeight()));int selected=Math.max(0,sizes.size()-1);Size preferred=preserve&&service!=null?service.captureSize():new Size(1280,720);
             for(int i=0;i<sizes.size();i++){Size size=sizes.get(i);labels.add(size.getWidth()+" × "+size.getHeight());if(size.equals(preferred)){selected=i;}}populate(sizeChoice,labels);lastSize=selected;sizeChoice.setSelection(selected);
             Range<Float> ratio=Build.VERSION.SDK_INT>=30?c.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE):null;Float digital=c.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM);
             minimumZoom=lens().physicalId==null&&ratio!=null?ratio.getLower():1f;maximumZoom=Math.max(minimumZoom,Math.min(30f,lens().physicalId==null&&ratio!=null?ratio.getUpper():digital==null?1:digital));
             if(!preserve){controls.zoom=1;controls.exposureCompensation=0;controls.torch=false;}controls.zoom=Math.max(minimumZoom,Math.min(maximumZoom,controls.zoom));zoomSlider.setProgress(zoomProgress(controls.zoom));zoomLabel.setText(String.format(Locale.US,"Zoom %.2f×",controls.zoom));zoomSlider.setEnabled(maximumZoom>minimumZoom);
             Range<Integer> ev=c.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE);int lower=ev==null?0:ev.getLower(),upper=ev==null?0:ev.getUpper();controls.exposureCompensation=Math.max(lower,Math.min(upper,controls.exposureCompensation));evSlider.setTag(-lower);evSlider.setMax(upper-lower);evSlider.setProgress(controls.exposureCompensation-lower);evLabel.setText("Exposure compensation "+controls.exposureCompensation+" steps");
-            maximumFocus=Objects.requireNonNullElse(c.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE),0f);fillModes(focusChoice,focusValues,c.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES),new int[]{3,1,0},new String[]{"Continuous autofocus","Tap to focus / hold","Manual focus"},controls.focusMode);if(!focusValues.contains(controls.focusMode)&&!focusValues.isEmpty()){controls.focusMode=focusValues.get(0);}focusSlider.setProgress(maximumFocus>0?(int)(controls.focusDistance/maximumFocus*1000):0);focusSlider.setEnabled(controls.focusMode==0&&maximumFocus>0);
+            Float focusMinimum=c.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE);maximumFocus=focusMinimum==null?0f:focusMinimum;fillModes(focusChoice,focusValues,c.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES),new int[]{3,1,0},new String[]{"Continuous autofocus","Tap to focus / hold","Manual focus"},controls.focusMode);if(!focusValues.contains(controls.focusMode)&&!focusValues.isEmpty()){controls.focusMode=focusValues.get(0);}focusSlider.setProgress(maximumFocus>0?(int)(controls.focusDistance/maximumFocus*1000):0);focusSlider.setEnabled(controls.focusMode==0&&maximumFocus>0);
             torchSwitch.setEnabled(Boolean.TRUE.equals(manager.getCameraCharacteristics(lens().cameraId).get(CameraCharacteristics.FLASH_INFO_AVAILABLE)));torchSwitch.setChecked(controls.torch);
             boolean manual=contains(c.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES),CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR);if(!manual){controls.autoExposure=true;}autoExposureSwitch.setEnabled(manual);autoExposureSwitch.setChecked(controls.autoExposure);aeLockSwitch.setChecked(controls.exposureLock);
             isoValues.clear();List<String> isoLabels=new ArrayList<>();Range<Integer> sensitivity=c.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE);for(int value:new int[]{50,100,200,400,800,1600,3200,6400}){if(sensitivity!=null&&sensitivity.contains(value)){isoValues.add(value);isoLabels.add(Integer.toString(value));}}populate(isoChoice,isoLabels);isoChoice.setSelection(Math.max(0,isoValues.indexOf(controls.iso)));
@@ -169,8 +223,8 @@ public final class MainActivity extends Activity implements TextureView.SurfaceT
 
     private void loadFrameRates(Integer preferred){
         if(!ready||sizes.isEmpty()){return;}boolean previous=uiUpdating;uiUpdating=true;
-        try{CameraCharacteristics c=capabilities();StreamConfigurationMap map=c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);Size size=sizes.get(Math.max(0,sizeChoice.getSelectedItemPosition()));long duration=map==null?0:map.getOutputMinFrameDuration(MediaCodec.class,size);Range<Integer>[] ranges=c.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);rates.clear();List<String> labels=new ArrayList<>();
-            for(int fps:new int[]{24,25,30,60}){if(duration>0&&duration>1_000_000_000L/fps+100_000){continue;}if(ranges!=null){for(Range<Integer> range:ranges){if(range.getUpper()==fps){rates.add(fps);labels.add(fps+" fps");break;}}}}
+        try{CameraCharacteristics c=capabilities();StreamConfigurationMap map=c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);Size size=sizes.get(Math.max(0,sizeChoice.getSelectedItemPosition()));long duration=map==null?0:(service!=null&&service.rawMode()?map.getOutputMinFrameDuration(android.graphics.ImageFormat.YUV_420_888,size):map.getOutputMinFrameDuration(MediaCodec.class,size));Range<Integer>[] ranges=c.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);rates.clear();List<String> labels=new ArrayList<>();
+            TreeSet<Integer> candidates=new TreeSet<>(Arrays.asList(15,24,25,30,60));if(ranges!=null){for(Range<Integer> range:ranges){candidates.add(range.getUpper());}}for(int fps:candidates){if(fps<1||fps>60||(duration>0&&duration>1_000_000_000L/fps+100_000)){continue;}if(ranges!=null){for(Range<Integer> range:ranges){if(range.contains(fps)){rates.add(fps);labels.add(fps+" fps");break;}}}}
             populate(fpsChoice,labels);fpsChoice.setSelection(Math.max(0,rates.indexOf(preferred==null?30:preferred)));start.setEnabled(preview.isAvailable()&&!rates.isEmpty());
         }finally{uiUpdating=previous;}
     }
@@ -184,7 +238,7 @@ public final class MainActivity extends Activity implements TextureView.SurfaceT
     private void updateExposureAvailability(){isoChoice.setEnabled(!controls.autoExposure&&!isoValues.isEmpty());shutterChoice.setEnabled(!controls.autoExposure&&!shutterValues.isEmpty());evSlider.setEnabled(controls.autoExposure&&evSlider.getMax()>0);if(ready){aeLockSwitch.setEnabled(controls.autoExposure&&Boolean.TRUE.equals(capabilities().get(CameraCharacteristics.CONTROL_AE_LOCK_AVAILABLE)));}}
     private int zoomProgress(float zoom){return maximumZoom>minimumZoom?(int)(Math.log(zoom/minimumZoom)/Math.log(maximumZoom/minimumZoom)*1000):0;}
     private void setZoom(float value){if(ready){zoomSlider.setProgress(zoomProgress(Math.max(minimumZoom,Math.min(maximumZoom,value))));}}
-    private void sendControls(){if(uiUpdating){return;}if(service!=null){service.setControls(controls);}if(ready){getPreferences(MODE_PRIVATE).edit().putString("lens",lens().key).apply();}}
+    private void sendControls(){refreshHud();if(uiUpdating){return;}if(service!=null){service.setControls(controls);}if(ready){getPreferences(MODE_PRIVATE).edit().putString("lens",lens().key).apply();}}
     private void scheduleStreamUpdate(){updateSummary();if(uiUpdating||!streaming){return;}main.removeCallbacks(applyStream);main.postDelayed(applyStream,450);}
     private void applyStreamSettings(){if(service==null||!streaming||!ready||sizes.isEmpty()||rates.isEmpty()||!preview.isAvailable()){return;}service.setControls(controls);service.updateCapture(lens(),sizes.get(sizeChoice.getSelectedItemPosition()),rates.get(fpsChoice.getSelectedItemPosition()),bitrates[bitrateChoice.getSelectedItemPosition()],preview.getSurfaceTexture());updatePreview();}
     private void toggleStreaming(){
@@ -192,7 +246,7 @@ public final class MainActivity extends Activity implements TextureView.SurfaceT
         if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},2);}
         try{service.setControls(controls);service.startCapture(lens(),sizes.get(sizeChoice.getSelectedItemPosition()),rates.get(fpsChoice.getSelectedItemPosition()),bitrates[bitrateChoice.getSelectedItemPosition()],preview.getSurfaceTexture());setStreaming(true);}catch(Exception error){status.setText("Camera service: "+error.getMessage());setStreaming(false);}
     }
-    private void setStreaming(boolean value){streaming=value;start.setText(value?"Stop USB camera":"Start USB camera");summary.setTextColor(value?BLUE:MUTED);updateSummary();}
+    private void setStreaming(boolean value){streaming=value;start.setText(value?"Stop camera":"Start camera");summary.setTextColor(value?BLUE:MUTED);updateSummary();if(value&&!fullScreen){toggleFullScreen();}refreshHud();}
     private void updateSummary(){if(ready&&!sizes.isEmpty()&&!rates.isEmpty()){Size size=sizes.get(Math.max(0,sizeChoice.getSelectedItemPosition()));int fps=rates.get(Math.max(0,fpsChoice.getSelectedItemPosition()));summary.setText((size.getWidth()==3840?"4K":size.getHeight()+"p")+" / "+fps+" fps");}}
     private void restoreServiceSettings(){if(service==null||!ready||service.captureLens()==null){return;}controls=service.controls();uiUpdating=true;for(int i=0;i<lenses.size();i++){if(lenses.get(i).key.equals(service.captureLens().key)){lastLens=i;lensChoice.setSelection(i);break;}}bitrateChoice.setSelection(Math.max(0,indexOf(bitrates,service.captureBitrate())));uiUpdating=false;loadCapabilities(true);}
     private int indexOf(int[] values,int value){for(int i=0;i<values.length;i++){if(values[i]==value){return i;}}return -1;}
@@ -215,11 +269,11 @@ public final class MainActivity extends Activity implements TextureView.SurfaceT
         @Override protected void onDraw(Canvas canvas){super.onDraw(canvas);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1));if(grid){paint.setColor(0x70ffffff);for(int i=1;i<=2;i++){float x=previewLeft+previewWidth*i/3,y=previewTop+previewHeight*i/3;canvas.drawLine(x,previewTop,x,previewTop+previewHeight,paint);canvas.drawLine(previewLeft,y,previewLeft+previewWidth,y,paint);}}if(focusX>=0){paint.setColor(Color.rgb(249,182,77));float half=dp(20);canvas.drawRect(focusX-half,focusY-half,focusX+half,focusY+half,paint);}}
     }
     @Override public void onRequestPermissionsResult(int code,String[] permissions,int[] results){super.onRequestPermissionsResult(code,permissions,results);if(code==1){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED){discoverCameras();}else{status.setText("Allow camera access to send video to OBS.");}}}
-    @Override public void onSurfaceTextureAvailable(SurfaceTexture surface,int width,int height){start.setEnabled(ready&&!rates.isEmpty());updatePreview();if(engine!=null&&service!=null&&service.isStreaming()){engine.attachPreview(surface);}}
+    @Override public void onSurfaceTextureAvailable(SurfaceTexture surface,int width,int height){start.setEnabled(ready&&!rates.isEmpty());refreshHud();updatePreview();if(engine!=null&&service!=null&&service.isStreaming()){engine.attachPreview(surface);}}
     @Override public void onSurfaceTextureSizeChanged(SurfaceTexture surface,int width,int height){updatePreview();}
     @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture surface){if(engine!=null&&service!=null&&service.isStreaming()){engine.detachPreview();return false;}return true;}
     @Override public void onSurfaceTextureUpdated(SurfaceTexture surface){}
     @Override public void onStop(){main.removeCallbacks(applyStream);if(engine!=null&&service!=null&&service.isStreaming()){engine.detachPreview();}super.onStop();}
-    @Override public void onResume(){super.onResume();if(service!=null){setStreaming(service.isStreaming());status.setText(service.status());if(engine!=null&&streaming&&preview.isAvailable()){engine.attachPreview(preview.getSurfaceTexture());}}}
+    @Override public void onResume(){super.onResume();if(service!=null){setStreaming(service.isStreaming());status.setText(service.status());uiUpdating=true;wirelessSwitch.setChecked(service.wireless());rawSwitch.setChecked(service.rawMode());uiUpdating=false;pairingText.setText(service.pairingDetails());if(engine!=null&&streaming&&preview.isAvailable()){engine.attachPreview(preview.getSurfaceTexture());}}}
     @Override public void onDestroy(){main.removeCallbacks(applyStream);if(service!=null){service.setListener(null);}if(bound){unbindService(connection);}super.onDestroy();}
 }

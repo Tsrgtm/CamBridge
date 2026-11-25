@@ -1,0 +1,7 @@
+# Third-party source provenance
+
+- `obs/`: selected OBS Studio **33.0.3** virtual-camera, timing, shared-queue API, and NV12 scaler sources from https://github.com/obsproject/obs-studio . GPL-2.0-or-later, except utility headers retaining their permissive notices. CamBridge changes: independent CLSID/name, per-user registration, correct COM interface queries, valid default formats, clock recovery, and adaptation to CamBridge's latest-frame shared memory. The original OBS queue implementation and placeholder artwork are not used.
+- `libdshowcapture/`: selected source and headers from https://github.com/obsproject/libdshowcapture at **c13d4b7b0c66979396ba0a9060c9aafc15bb7b22**. LGPL-2.1-or-later; original file notices are retained and `LICENSES/LGPL-2.1.txt` is included. These sources are statically compiled into the GPL camera DLL; rebuild from this tree to modify or replace them.
+- `libyuv/`: source/include, AUTHORS, LICENSE, and PATENTS from https://chromium.googlesource.com/libyuv/libyuv at **525a3a3c726caf41c1e407c040b698cbb45e188c**. BSD license with its patent grant. Used statically for SIMD YUV rotation and plane merging. JPEG is disabled in this build.
+
+The complete corresponding source used by CamBridge's native build is included here. Windows system libraries are supplied by Windows. Android platform-tools and toolchains are downloaded separately; their notices accompany the distributed binaries where applicable.

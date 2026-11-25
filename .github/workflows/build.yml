@@ -1,0 +1,40 @@
+name: Build and regression checks
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare pinned toolchains
+        run: .\Bootstrap.ps1 -AcceptAndroidLicenses
+      - name: Prepare OBS build runtime
+        run: .\scripts\Prepare-CI.ps1
+      - name: Build Android, Windows companion, virtual camera, and OBS plugin
+        run: .\Build.ps1 -ObsDirectory "$PWD\tools\obs-runtime"
+      - name: Check Android API compatibility
+        run: |
+          $env:JAVA_HOME=(Get-ChildItem .\tools\jdk -Directory | Select-Object -First 1).FullName
+          $env:ANDROID_HOME="$PWD\tools\android-sdk"
+          .\gradlew.bat --no-daemon --console=plain lintDebug
+      - name: Run portable regression checks
+        run: .\Test.ps1 -TransportOnly
+      - name: Upload development build artifacts
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: CamBridge-development-builds
+          path: |
+            dist/CamBridge-0.5.0.apk
+            dist/CamBridge-Windows-x64-0.5.0.zip
+            dist/CamBridge-OBS-Windows-x64-0.5.0.zip
+          retention-days: 7
+          if-no-files-found: error

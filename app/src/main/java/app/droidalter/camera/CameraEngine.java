@@ -27,7 +27,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 final class CameraEngine {
-    interface Listener { void status(String message); void failed(String message); }
+    interface Listener { void status(String message); void failed(String message); default void controlsChanged() {} }
     private final CameraManager manager;
     private final Listener listener;
     private final HandlerThread cameraThread = new HandlerThread("camera-control");
@@ -41,12 +41,63 @@ final class CameraEngine {
     private Surface inputSurface;
     private Surface previewSurface;
     private SurfaceTexture previewTexture;
-    private boolean previewAttached;
+    private volatile boolean previewAttached;
+    private Surface configuredPreviewSurface;
     private Size captureSize;
     private int captureFps;
     private int sessionGeneration;
     private UsbStreamServer server;
+    private volatile UsbStreamServer wifiServer;
+    private PairingIdentity identity;
+    private UsbStreamServer.Listener streamListener;
+    private volatile byte[] streamConfiguration = new byte[0];
+    SurfaceTexture activePreview() { return previewAttached ? previewTexture : null; }
+    void setWireless(PairingIdentity value) {
+        handler.post(() -> {
+            identity = value;
+            if (wifiServer != null) { wifiServer.close(); wifiServer = null; }
+            if (running && identity != null && !rawMode) { try { startWifi(); } catch (Exception error) { listener.status("Wi-Fi: " + error.getMessage()); } }
+        });
+    }
+    private void startWifi() throws Exception {
+        java.net.ServerSocket socket = identity.tls.getServerSocketFactory().createServerSocket(5890, 2);
+        wifiServer = new UsbStreamServer(socket, identity.code, streamListener);
+        wifiServer.setConfiguration(streamConfiguration);
+        Integer source = characteristics.get(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE);
+        wifiServer.setRealtimeTimestamps(source != null && source == CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME);
+        Integer orientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
+        wifiServer.setRotation(orientation == null ? 90 : orientation);
+    }
+    private void configuration(byte[] bytes) {
+        streamConfiguration = bytes;
+        server.setConfiguration(bytes);
+        UsbStreamServer wifi = wifiServer; if (wifi != null) { wifi.setConfiguration(bytes); }
+    }
     private Thread drainThread;
+    private volatile boolean rawMode;
+    private android.media.ImageReader rawReader;
+    private HandlerThread rawThread;
+    void setRawMode(boolean value){handler.post(()->rawMode=value);}
+    private void startRaw(Size size,int startGeneration){
+        rawReader=android.media.ImageReader.newInstance(size.getWidth(),size.getHeight(),android.graphics.ImageFormat.YUV_420_888,3);
+        inputSurface=rawReader.getSurface();
+        final java.util.concurrent.ArrayBlockingQueue<byte[]> pool=new java.util.concurrent.ArrayBlockingQueue<>(3);
+        for(int i=0;i<3;i++){pool.add(new byte[36+size.getWidth()*size.getHeight()*3/2]);}
+        final Nv12Packer packer=new Nv12Packer();rawThread=new HandlerThread("uncompressed-camera");rawThread.start();
+        rawReader.setOnImageAvailableListener(reader->{
+            if(!running||generation!=startGeneration){return;}
+            try(android.media.Image image=reader.acquireLatestImage()){
+                if(image==null){return;}if(server==null||!server.connected()){return;}byte[] buffer=pool.poll();if(buffer==null){return;}
+                boolean sent=false;
+                try{
+                    android.graphics.Rect crop=image.getCropRect();android.media.Image.Plane[] planes=image.getPlanes();
+                    packer.pack(planes[0].getBuffer(),planes[0].getRowStride(),planes[0].getPixelStride(),planes[1].getBuffer(),planes[1].getRowStride(),planes[1].getPixelStride(),planes[2].getBuffer(),planes[2].getRowStride(),planes[2].getPixelStride(),crop.left,crop.top,crop.width(),crop.height(),buffer,36);
+                    UsbStreamServer output=server;
+                    if(output!=null){sent=output.publishRaw(buffer,crop.width(),crop.height(),captureFps,image.getTimestamp()/1000,()->pool.offer(buffer));}
+                }finally{if(!sent){pool.offer(buffer);}}
+            }catch(Exception error){if(running&&generation==startGeneration){handler.post(()->fail("Uncompressed camera: "+error.getMessage()));}}
+        },new Handler(rawThread.getLooper()));
+    }
     private volatile boolean running;
     private int generation;
     private CameraControls controls = new CameraControls();
@@ -67,7 +118,7 @@ final class CameraEngine {
     void reconfigure(CameraCatalog.Lens lens, Size size, int fps, int bitrateMbps, SurfaceTexture preview) {
         handler.post(() -> {
             stopOnCameraThread();
-            listener.status("Switching camera settings · OBS recording continues");
+            listener.status("Switching camera settings · output resumes automatically");
             startOnCameraThread(lens, size, fps, bitrateMbps, preview);
         });
     }
@@ -94,6 +145,7 @@ final class CameraEngine {
             lens = selectedLens;
             characteristics = lens.characteristics;
             logicalCharacteristics = manager.getCameraCharacteristics(lens.cameraId);
+            if(rawMode){startRaw(size,startGeneration);}else{
             encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
             MediaCodecInfo.VideoCapabilities capabilities = encoder.getCodecInfo()
                     .getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC).getVideoCapabilities();
@@ -115,12 +167,24 @@ final class CameraEngine {
                     break;
                 }
             }
-            encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            try { encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE); }
+            catch (IllegalArgumentException | MediaCodec.CodecException unsupportedOptionalKeys) {
+                encoder.release();
+                encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+                MediaFormat basic = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, size.getWidth(), size.getHeight());
+                basic.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
+                basic.setInteger(MediaFormat.KEY_BIT_RATE, capabilities.getBitrateRange().clamp(mbps * 1_000_000));
+                basic.setInteger(MediaFormat.KEY_FRAME_RATE, fps);
+                basic.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
+                basic.setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0);
+                encoder.configure(basic, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            }
             inputSurface = encoder.createInputSurface();
             encoder.start();
-            server = new UsbStreamServer(5889, new UsbStreamServer.Listener() {
+            }
+            streamListener = new UsbStreamServer.Listener() {
                 public void onConnection(boolean connected) {
-                    if (running) { listener.status(connected ? "USB connected · streaming H.264" : "Ready · waiting for OBS over USB"); }
+                    if (running) { listener.status(connected ? (rawMode ? "USB connected · uncompressed NV12" : "Camera connected · live H.264") : "Ready · connect CamBridge on your PC"); }
                 }
                 public void requestKeyFrame() {
                     handler.post(() -> {
@@ -130,20 +194,23 @@ final class CameraEngine {
                         try { encoder.setParameters(parameters); } catch (IllegalStateException ignored) { }
                     });
                 }
+                public void onError(String message) { android.util.Log.w("CamBridge", "Transport: " + message); }
                 public long clockTimeNs() { return android.os.SystemClock.elapsedRealtimeNanos(); }
-            });
+            };
+            server = new UsbStreamServer(5889, streamListener);
+            server.setRawMode(rawMode);
+            if (identity != null && !rawMode) { startWifi(); }
             Integer timestampSource = characteristics.get(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE);
             server.setRealtimeTimestamps(timestampSource != null && timestampSource == CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME);
             Integer sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
             server.setRotation(sensorOrientation == null ? 90 : sensorOrientation);
             Size previewSize = choosePreviewSize(size);
-            preview.setDefaultBufferSize(previewSize.getWidth(), previewSize.getHeight());
-            previewSurface = new Surface(preview);
+            if (preview != null) { preview.setDefaultBufferSize(previewSize.getWidth(), previewSize.getHeight()); }
+            previewSurface = preview == null ? null : new Surface(preview);
             previewTexture = preview;
-            previewAttached = true;
+            previewAttached = preview != null;
             encoding.set(true);
-            drainThread = new Thread(this::drainEncoder, "h264-encoder-output");
-            drainThread.start();
+            if(!rawMode){drainThread = new Thread(this::drainEncoder, "h264-encoder-output"); drainThread.start();}
             manager.openCamera(lens.cameraId, new CameraDevice.StateCallback() {
                 @Override public void onOpened(CameraDevice device) {
                     if (!running || generation != startGeneration) { device.close(); return; }
@@ -180,27 +247,30 @@ final class CameraEngine {
 
     private void createCaptureSession(int fps, int startGeneration) {
         final int captureSessionGeneration = ++sessionGeneration;
+        final Surface sessionPreview = previewSurface, sessionInput = inputSurface;
         try {
             List<OutputConfiguration> outputs = new ArrayList<>();
-            for (Surface surface : Arrays.asList(previewSurface, inputSurface)) {
+            for (Surface surface : Arrays.asList(sessionPreview, sessionInput)) {
+                if (surface == null) { continue; }
                 OutputConfiguration output = new OutputConfiguration(surface);
-                if (lens.physicalId != null) { output.setPhysicalCameraId(lens.physicalId); }
+                if (android.os.Build.VERSION.SDK_INT >= 28 && lens.physicalId != null) { output.setPhysicalCameraId(lens.physicalId); }
                 outputs.add(output);
             }
             CameraCaptureSession.StateCallback callback = new CameraCaptureSession.StateCallback() {
                 @Override public void onConfigured(CameraCaptureSession configuredSession) {
                     if (!running || camera == null || generation != startGeneration || sessionGeneration != captureSessionGeneration) { configuredSession.close(); return; }
                     session = configuredSession;
+                    configuredPreviewSurface = sessionPreview;
                     try {
-                        request = lens.physicalId == null ? camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
+                        request = android.os.Build.VERSION.SDK_INT < 28 || lens.physicalId == null ? camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
                                 : camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD, Collections.singleton(lens.physicalId));
-                        request.addTarget(inputSurface);
-                        if (previewAttached) { request.addTarget(previewSurface); }
+                        request.addTarget(sessionInput);
+                        if (previewAttached && sessionPreview != null) { request.addTarget(sessionPreview); }
                         Range<Integer>[] ranges = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
                         Range<Integer> selected = null;
                         if (ranges != null) {
                             for (Range<Integer> range : ranges) {
-                                if (range.getUpper() == fps && (selected == null || range.getLower() > selected.getLower())) {
+                                if (range.contains(fps) && (selected == null || range.getLower() > selected.getLower())) {
                                     selected = range;
                                 }
                             }
@@ -208,7 +278,7 @@ final class CameraEngine {
                         if (selected == null) { throw new IllegalArgumentException("Selected frame rate is unavailable for this camera"); }
                         request.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, selected);
                         applyControls();
-                        listener.status("Ready · waiting for OBS over USB");
+                        listener.status("Ready · connect CamBridge on your PC");
                     } catch (Exception error) { fail("Camera configuration: " + error.getMessage()); }
                 }
                 @Override public void onConfigureFailed(CameraCaptureSession failedSession) {
@@ -217,17 +287,17 @@ final class CameraEngine {
                     }
                 }
             };
-            SessionConfiguration configuration = new SessionConfiguration(SessionConfiguration.SESSION_REGULAR, outputs,
-                    command -> handler.post(command), callback);
-            camera.createCaptureSession(configuration);
+
+            if (android.os.Build.VERSION.SDK_INT >= 28) { camera.createCaptureSession(new SessionConfiguration(SessionConfiguration.SESSION_REGULAR, outputs, command -> handler.post(command), callback)); }
+            else { camera.createCaptureSessionByOutputConfigurations(outputs, callback, handler); }
         } catch (Exception error) { fail("Capture session: " + error.getMessage()); }
     }
 
     void detachPreview() {
         handler.post(() -> {
             previewAttached = false;
-            if (request != null && previewSurface != null && session != null) {
-                request.removeTarget(previewSurface);
+            if (request != null && configuredPreviewSurface != null && session != null) {
+                request.removeTarget(configuredPreviewSurface);
                 try { session.setRepeatingRequest(request.build(), null, handler); }
                 catch (Exception error) { listener.status("Preview detached · USB stream continues"); }
             }
@@ -239,8 +309,8 @@ final class CameraEngine {
             if (!running || camera == null) { return; }
             if (texture == previewTexture) {
                 previewAttached = true;
-                if (request != null && previewSurface != null) {
-                    request.addTarget(previewSurface);
+                if (request != null && configuredPreviewSurface != null) {
+                    request.addTarget(configuredPreviewSurface);
                     try { applyControls(); } catch (Exception ignored) { }
                 }
                 return;
@@ -272,7 +342,7 @@ final class CameraEngine {
     }
 
     private <T> void set(CaptureRequest.Key<T> key, T value) {
-        if (lens.physicalId != null) {
+        if (android.os.Build.VERSION.SDK_INT >= 28 && lens.physicalId != null) {
             List<CaptureRequest.Key<?>> physicalKeys = logicalCharacteristics.getAvailablePhysicalCameraRequestKeys();
             if (physicalKeys != null && physicalKeys.contains(key)) {
                 request.setPhysicalCameraKey(key, value, lens.physicalId);
@@ -388,7 +458,7 @@ final class CameraEngine {
                         ByteBuffer bytes = format.getByteBuffer(key);
                         if (bytes != null) { byte[] normalized = AnnexB.normalize(bytes.duplicate()); config.write(normalized, 0, normalized.length); }
                     }
-                    server.setConfiguration(config.toByteArray());
+                    configuration(config.toByteArray());
                 } else if (index >= 0) {
                     try {
                         ByteBuffer output = encoder.getOutputBuffer(index);
@@ -396,9 +466,11 @@ final class CameraEngine {
                             output.position(info.offset); output.limit(info.offset + info.size);
                             byte[] bytes = AnnexB.normalize(output);
                             if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
-                                server.setConfiguration(bytes);
+                                configuration(bytes);
                             } else {
                                 server.publish(bytes, (info.flags & MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0, info.presentationTimeUs);
+                                UsbStreamServer wifi = wifiServer;
+                                if (wifi != null) { wifi.publish(bytes, (info.flags & MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0, info.presentationTimeUs); }
                             }
                         }
                     } finally { encoder.releaseOutputBuffer(index, false); }
@@ -416,11 +488,13 @@ final class CameraEngine {
     private void stopOnCameraThread() {
         running = false;
         generation++;
-        request = null;
+        request = null; configuredPreviewSurface = null;
         if (session != null) { session.close(); session = null; }
         if (camera != null) { camera.close(); camera = null; }
         encoding.set(false);
         if (server != null) { server.close(); }
+        if (wifiServer != null) { wifiServer.close(); wifiServer = null; }
+        streamConfiguration = new byte[0];
         if (drainThread != null) {
             try { drainThread.join(1500); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
             drainThread = null;
@@ -430,6 +504,9 @@ final class CameraEngine {
             try { encoder.stop(); } catch (IllegalStateException ignored) { }
             encoder.release(); encoder = null;
         }
+        if(rawReader!=null){rawReader.setOnImageAvailableListener(null,null);}
+        if(rawThread!=null){rawThread.quitSafely();try{rawThread.join(1500);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();}rawThread=null;}
+        if(rawReader!=null){rawReader.close();rawReader=null;}
         if (inputSurface != null) { inputSurface.release(); inputSurface = null; }
         if (previewSurface != null) { previewSurface.release(); previewSurface = null; }
         if (previewTexture != null && !previewAttached) { previewTexture.release(); }

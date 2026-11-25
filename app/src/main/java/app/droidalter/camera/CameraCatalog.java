@@ -29,9 +29,9 @@ final class CameraCatalog {
             else if (automatic) { name = "Rear auto"; }
             else if (equivalentFocal < 18) { name = "Ultra wide"; }
             else if (equivalentFocal < 40) { name = "Main wide"; }
-            else if (equivalentFocal < 95) { name = "Telephoto 3×"; }
-            else { name = "Telephoto 5×"; }
-            shortName = front ? "Front" : automatic ? "Auto" : equivalentFocal < 18 ? "0.6×" : equivalentFocal < 40 ? "1×" : equivalentFocal < 95 ? "3×" : "5×";
+            else if (equivalentFocal < 95) { name = "Telephoto"; }
+            else { name = "Long telephoto"; }
+            shortName = front ? "Front" : automatic ? "Auto" : equivalentFocal > 0 ? String.format(Locale.US,"%.0fmm",equivalentFocal) : "Rear";
             title = name + (equivalentFocal > 0 && !automatic ? String.format(Locale.US, " · %.0f mm", equivalentFocal) : "")
                     + "  [" + (physicalId == null ? cameraId : cameraId + "/" + physicalId) + "]";
         }
@@ -39,11 +39,11 @@ final class CameraCatalog {
 
     static List<Lens> discover(CameraManager manager) throws Exception {
         List<Lens> lenses = new ArrayList<>();
-        Set<String> publicIds = new HashSet<>(Arrays.asList(manager.getCameraIdList()));
+        Set<String> publicIds = new TreeSet<>(Arrays.asList(manager.getCameraIdList()));
         Set<String> includedPhysicalIds = new HashSet<>();
         for (String id : publicIds) {
-            CameraCharacteristics characteristics = manager.getCameraCharacteristics(id);
-            Set<String> physicalIds = characteristics.getPhysicalCameraIds();
+            CameraCharacteristics characteristics; try { characteristics = manager.getCameraCharacteristics(id); } catch (Exception unavailable) { continue; }
+            Set<String> physicalIds = (android.os.Build.VERSION.SDK_INT >= 28 ? characteristics.getPhysicalCameraIds() : Collections.<String>emptySet());
             if (physicalIds.isEmpty()) { continue; }
             lenses.add(new Lens(id, null, characteristics, true));
             for (String physical : physicalIds) {
@@ -56,15 +56,15 @@ final class CameraCatalog {
             }
         }
         for (String id : publicIds) {
-            CameraCharacteristics info = manager.getCameraCharacteristics(id);
-            if (includedPhysicalIds.contains(id) || !info.getPhysicalCameraIds().isEmpty()) { continue; }
+            CameraCharacteristics info; try { info = manager.getCameraCharacteristics(id); } catch (Exception unavailable) { continue; }
+            if (includedPhysicalIds.contains(id) || (android.os.Build.VERSION.SDK_INT >= 28 && !info.getPhysicalCameraIds().isEmpty())) { continue; }
             if (info.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) == null
                     || info.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP).getOutputSizes(MediaCodec.class) == null) { continue; }
             lenses.add(new Lens(id, null, info, false));
         }
         lenses.sort(Comparator.comparing((Lens lens) -> lens.front).thenComparing(lens -> !lens.automatic)
                 .thenComparingDouble(lens -> lens.equivalentFocal));
-        for (Lens lens : lenses) { android.util.Log.i("CamBridge", "Camera available: " + lens.title); }
+
         return lenses;
     }
 }

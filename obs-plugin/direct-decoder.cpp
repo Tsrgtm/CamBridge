@@ -117,7 +117,7 @@ static void receiveConnection(Receiver *receiver, SOCKET socket)
             uint8_t header[20];
             if (!readExact(receiver, socket, header, sizeof(header))) { break; }
             uint32_t length = read32(header + 4), flags = read32(header + 16);
-            if (read32(header) != 0x44414c54 || length == 0 || length > 16 * 1024 * 1024 || (flags & ~7u) != 0) {
+            if (read32(header) != 0x44414c54 || length == 0 || length > 32 * 1024 * 1024 || (flags & ~15u) != 0) {
                 blog(LOG_WARNING, "[droid-alter] Invalid frame header; reconnecting. Update both APK and plugin together.");
                 break;
             }
@@ -131,6 +131,16 @@ static void receiveConnection(Receiver *receiver, SOCKET socket)
                 configuration.assign(packet->data, packet->data + length);
                 av_packet_unref(packet);
                 continue;
+            }
+            if(flags&8){
+                uint8_t *raw=packet->data;
+                uint32_t w=length>=16?read32(raw):0,h=length>=16?read32(raw+4):0;
+                if(w<2||h<2||w>4096||h>4096||((w|h)&1)||uint64_t(w)*h*3/2+16!=length){av_packet_unref(packet);break;}
+                int angle=int(read32(raw+8));if(angle==0||angle==90||angle==180||angle==270){receiver->rotation.store(angle);}
+                obs_source_frame frame{};frame.format=VIDEO_FORMAT_NV12;frame.width=w;frame.height=h;frame.data[0]=raw+16;frame.data[1]=raw+16+size_t(w)*h;frame.linesize[0]=frame.linesize[1]=w;frame.timestamp=os_gettime_ns();frame.full_range=false;
+                video_format_get_parameters(VIDEO_CS_709,VIDEO_RANGE_PARTIAL,frame.color_matrix,frame.color_range_min,frame.color_range_max);obs_source_output_video(receiver->source,&frame);
+                if(firstFrame){blog(LOG_INFO,"[droid-alter] Uncompressed USB NV12 %ux%u; no H.264 encoding/decoding",w,h);firstFrame=false;}
+                av_packet_unref(packet);continue;
             }
             packet->pts = packet->dts = static_cast<int64_t>(read64(header + 8));
             if (flags & 1) { packet->flags |= AV_PKT_FLAG_KEY; }
