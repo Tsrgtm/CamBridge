@@ -18,7 +18,13 @@ foreach($archive in $archives){
     }
     if((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -ne $archive.Hash){throw "Checksum mismatch: $zip. Do not use the archive; investigate its upstream version."}
     $folder="$project\tools\$($archive.Name)"
-    if(!(Test-Path -LiteralPath $folder)){Expand-Archive -LiteralPath $zip -DestinationPath $folder}
+    if(!(Test-Path -LiteralPath $folder)){
+        New-Item -ItemType Directory -Force $folder | Out-Null
+        if(Get-Command tar.exe -ErrorAction SilentlyContinue){
+            & tar.exe -xf $zip -C $folder
+            if($LASTEXITCODE -ne 0){throw "Archive extraction failed: $zip"}
+        }else{Expand-Archive -LiteralPath $zip -DestinationPath $folder}
+    }
 }
 $env:JAVA_HOME=(Get-ChildItem "$project\tools\jdk" -Directory | Select-Object -First 1).FullName
 $sdk="$project\tools\android-sdk"
