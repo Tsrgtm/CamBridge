@@ -29,22 +29,22 @@ if(!(Test-Path -LiteralPath $sdkManager)){
 }
 if(!(Test-Path -LiteralPath "$sdk\licenses\android-sdk-license")){
     if(!$AcceptAndroidLicenses){throw 'Read the Android SDK licenses, then rerun with -AcceptAndroidLicenses to accept them and install the SDK.'}
-    $start=New-Object System.Diagnostics.ProcessStartInfo
-    $start.FileName=$env:ComSpec
-    $start.Arguments='/d /s /c ""'+$sdkManager+'" "--sdk_root='+$sdk+'" --licenses"'
-    $start.UseShellExecute=$false
-    $start.CreateNoWindow=$true
-    $start.RedirectStandardInput=$true
-    $licenseProcess=New-Object System.Diagnostics.Process
-    $licenseProcess.StartInfo=$start
-    [void]$licenseProcess.Start()
-    $licenseProcess.StandardInput.Write(("y`r`n"*100))
-    $licenseProcess.StandardInput.Close()
-    $licenseProcess.WaitForExit()
-    $licenseExit=$licenseProcess.ExitCode
-    $licenseProcess.Dispose()
-    if($licenseExit -ne 0 -or !(Test-Path -LiteralPath "$sdk\licenses\android-sdk-license")){throw 'Android SDK license acceptance failed.'}
-
+    $answers=[IO.Path]::GetTempFileName()
+    try {
+        [IO.File]::WriteAllText($answers,("y`r`n"*100),[Text.Encoding]::ASCII)
+        $start=New-Object System.Diagnostics.ProcessStartInfo
+        $start.FileName=$env:ComSpec
+        $start.Arguments='/d /s /c ""'+$sdkManager+'" "--sdk_root='+$sdk+'" --licenses < "'+$answers+'""'
+        $start.UseShellExecute=$false
+        $start.CreateNoWindow=$true
+        $licenseProcess=New-Object System.Diagnostics.Process
+        $licenseProcess.StartInfo=$start
+        [void]$licenseProcess.Start()
+        $licenseProcess.WaitForExit()
+        $licenseExit=$licenseProcess.ExitCode
+        $licenseProcess.Dispose()
+        if($licenseExit -ne 0 -or !(Test-Path -LiteralPath "$sdk\licenses\android-sdk-license")){throw 'Android SDK license acceptance failed.'}
+    } finally {Remove-Item -LiteralPath $answers -Force}
 }
 & $sdkManager "--sdk_root=$sdk" 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0'
 if($LASTEXITCODE -ne 0){throw 'Android SDK installation failed.'}
