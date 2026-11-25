@@ -1,4 +1,4 @@
-param([string]$InstallDirectory="$env:LOCALAPPDATA\Programs\CamBridge")
+param([string]$InstallDirectory=$PSScriptRoot)
 $ErrorActionPreference='Stop'
 if(Get-Process CamBridge -ErrorAction SilentlyContinue){throw 'Close CamBridge and apps using its camera before uninstalling.'}
 $result=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s','/u',('"'+"$InstallDirectory\CamBridgeCamera64.dll"+'"')) -Wait -PassThru -WindowStyle Hidden

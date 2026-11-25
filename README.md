@@ -35,7 +35,7 @@ The app discovers capabilities rather than assuming Samsung, Pixel, Xiaomi, OneP
 
 1. Download `CamBridge-0.5.0.apk` and `CamBridge-Windows-x64-0.5.0.zip` from Releases.
 2. On Android, open the APK, allow installation from that file source when asked, and open **CamBridge**. Allow **Camera** and notifications.
-3. Extract the Windows ZIP. Run **Install-CamBridge.cmd** under the Windows account that will use the camera. It installs under `%LOCALAPPDATA%\Programs\CamBridge`, registers both camera DLLs for that user, and creates a Start menu shortcut. Administrator rights are normally unnecessary.
+3. Extract the Windows ZIP. Run **Install-CamBridge.cmd** under the Windows account that will use the camera. It installs under `%LOCALAPPDATA%\Programs\CamBridge\0.5.0`, registers both camera DLLs for that user, and creates a Start menu shortcut. Administrator rights are normally unnecessary.
 4. Open **CamBridge** from Start. Close other CamBridge instances before updating.
 
 The preview APK is development-signed. It can update earlier Droid Alter/CamBridge APKs signed on the same release machine. A build from another machine normally has a different debug signing key and may require uninstalling first. Private signing keys are not in the repository.

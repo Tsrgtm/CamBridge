@@ -1,4 +1,4 @@
-param([string]$Destination="$env:LOCALAPPDATA\Programs\CamBridge")
+param([string]$Destination="$env:LOCALAPPDATA\Programs\CamBridge\0.5.0")
 $ErrorActionPreference='Stop'
 if(Get-Process CamBridge -ErrorAction SilentlyContinue){throw 'Close CamBridge before installing an update.'}
 New-Item -ItemType Directory -Force $Destination | Out-Null
